@@ -1,0 +1,222 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "AWS CloudFormation template deploy an Elastic Beanstalk application behind an Elastic Load Balancer and an Auto Scaling Group. The ASG have scaling policies based on CPU utilization to ensure the application can handle varying loads."
+
+
+Parameters:
+  VpcID:
+    Type: AWS::EC2::VPC::Id
+    ConstraintDescription: "VpcID is required."
+    Default: vpc-id
+    Description: This is the VPC where the resources will be created.
+
+  EC2SubnetID:
+    Type: AWS::EC2::Subnet::Id
+    Description: This is the subnet where the EC2 instances will be launched.
+
+  AppEnvironment:
+    Type: String
+    Default: staging
+    Description: Environment of the Elastic Beanstalk Application.
+    AllowedValues: [development, testing, staging, production, poc]
+  EC2InstanceType: 
+    Type: String
+    Default: t2.medium
+    Description: The instance type for the EC2 instances in the Auto Scaling Group.
+    AllowedValues: [t2.medium, t2.large, t2.xlarge]
+  LoadBalancerSubnetID:
+    Type: AWS::EC2::Subnet::Id
+    Description: This is the subnet where the Elastic Load Balancer (ELB) will be deployed.
+
+  LoadBalancerVisibility:
+    Type: String
+    Default: public
+    Description: The visibility of the Elastic Load Balancer (public or private).
+    AllowedValues: [public, private]
+  AppSolutionStackType:
+    Type: String
+    Description: The type of solution stack to use for the Elastic Beanstalk application.  
+    Default: 64bit Amazon Linux 2023 v6.0.2 running Node.js 18
+    AllowedValues:
+    - 64bit Amazon Linux 2023 v4.0.5 running Python 3.11
+    - 64bit Amazon Linux 2023 v6.0.2 running Node.js 18
+    - 64bit Amazon Linux 2023 v4.0.5 running Python 3.9
+
+  S3BucketName:
+    Type: String
+    Description: Name of the S3 Bucket where your code ZIP is available.
+
+  S3BucketFileName:
+    Type: String
+    Description: Name of the ZIP file.
+
+      
+
+Resources:
+  CloudWatchRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: This is the IAM role used for CloudWatch Logs
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ["ec2.amazonaws.com"]
+            Action: ["sts:AssumeRole"]
+      Policies:
+        - PolicyName: Beanstalk_Cloudwatch_Policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: 
+                  [
+                    "autoscaling-plans:*",
+                    "autoscaling:Describe*",
+                    "cloudformation:Describe*",
+                    "cloudformation:Estimate*",
+                    "cloudformation:Get*",
+                    "cloudformation:List*",
+                    "cloudformation:Validate*",
+                    "cloudwatch:DescribeAlarms",
+                    "cloudwatch:GetMetricStatistics",
+                    "cloudwatch:ListMetrics",
+                    "ec2:AllocateAddress",
+                    "ec2:AssociateAddress",
+                    "ec2:AuthorizeSecurityGroup*",
+                    "ec2:CreateLaunchTemplate*",
+                    "ec2:CreateSecurityGroup",
+                    "ec2:CreateTags",
+                    "ec2:DeleteLaunchTemplate*",
+                    "ec2:DeleteSecurityGroup",
+                    "ec2:DeleteTags",
+                    "ec2:Describe*",
+                    "ec2:DisassociateAddress",
+                    "ec2:ReleaseAddress",
+                    "ec2:RevokeSecurityGroup*",
+                    "elasticbeanstalk:*",
+                    "elasticloadbalancing:Describe*",
+                    "iam:GetRole",
+                    "iam:ListAttachedRolePolicies",
+                    "iam:ListEC2InstanceProfiles",
+                    "iam:ListRolePolicies",
+                    "iam:ListRoles",
+                    "iam:ListServerCertificates",
+                    "logs:Describe*",
+                    "logs:CreateLogGroup",
+                    "logs:CreateLogStream",
+                    "logs:GetLogEvents",
+                    "logs:PutLogEvents",
+                    "logs:DescribeLogGroups",
+                    "logs:DescribeLogStreams",
+                    "logs:FilterLogEvents",
+                    "logs:PutRetentionPolicy",
+                  ]
+                Resource: "*"
+
+  EC2InstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      InstanceProfileName: !Sub ${AppName}_${AppEnvironment}_CloudWatch
+      Roles:
+        - !Ref CloudWatchRole
+
+  CloudWatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/elasticbeanstalk/${AppName}_${AppEnvironment}/var/log/elasticbeanstalk_nodejs_app/stdouterr.log
+      RetentionInDays: 3
+
+  AppName:
+    Type: "AWS::ElasticBeanstalk::Application"
+    Properties:
+      ApplicationName: nodejs-app
+      Description: This is Sample nodejs Application.
+  
+  AppVersion:
+    Type: "AWS::ElasticBeanstalk::ApplicationVersion"
+    Properties:
+      ApplicationName: !Ref AppName
+      Description: String
+      SourceBundle:
+        S3Bucket: !Sub ${S3BucketName}  #Change the bucket name.
+        S3Key: !Sub ${S3BucketFileName}	#upload the project in zip file
+
+  AppEnvironmentironment:
+    Type: "AWS::ElasticBeanstalk::Environment"
+    Properties:
+      EnvironmentName: !Sub ${AppName}-${AppEnvironment}
+      ApplicationName: !Ref AppName
+      SolutionStackName: !Sub ${AppSolutionStackType}
+      # SolutionStackName: "64bit Amazon Linux 2023 v6.0.2 running Node.js 18" 
+      Tier:
+        Name: WebServer
+        Type: Standard
+        Version: "1.0"
+      OptionSettings: 
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: APP_ENV
+          Value: !Ref AppEnvironment
+        - Namespace: aws:elasticbeanstalk:command
+          OptionName: DeploymentPolicy
+          Value: RollingWithAdditionalBatch
+        - Namespace: aws:elasticbeanstalk:command
+          OptionName: BatchSizeType
+          Value: Fixed
+        - Namespace: aws:elasticbeanstalk:command
+          OptionName: BatchSize
+          Value: 1
+        - Namespace: aws:ec2:vpc
+          OptionName: VPCId
+          Value: !Ref VpcID
+        - Namespace: aws:ec2:vpc
+          OptionName: Subnets
+          Value: !Ref EC2SubnetID
+        - Namespace: "aws:autoscaling:launchconfiguration"
+          OptionName: InstanceType
+          Value: !Ref EC2InstanceType
+        - Namespace: aws:elasticbeanstalk:environment
+          OptionName: EnvironmentType
+          Value: LoadBalanced
+        - Namespace: "aws:elasticbeanstalk:environment"
+          OptionName: LoadBalancerType
+          Value: network
+        - Namespace: "aws:ec2:vpc"
+          OptionName: ELBSubnets
+          Value: !Ref LoadBalancerSubnetID
+        - Namespace: "aws:ec2:vpc"
+          OptionName: ELBScheme
+          Value: !Sub ${LoadBalancerVisibility}
+        - Namespace: "aws:autoscaling:launchconfiguration"
+          OptionName: IamInstanceProfile
+          Value: !Ref EC2InstanceProfile
+        - Namespace: aws:elasticbeanstalk:cloudwatch:logs
+          OptionName: StreamLogs
+          Value: true
+        - Namespace: "aws:autoscaling:asg"
+          OptionName: MinSize
+          Value: 2
+        - Namespace: "aws:autoscaling:asg"
+          OptionName: MaxSize
+          Value: 4
+        - Namespace: "aws:autoscaling:trigger"
+          OptionName: UpperThreshold
+          Value: "80"
+        - Namespace: "aws:autoscaling:trigger"
+          OptionName: BreachDuration
+          Value: "5"
+        - Namespace: "aws:autoscaling:trigger"
+          OptionName: UpperBreachScaleIncrement
+          Value: "1"
+        - Namespace: "aws:autoscaling:trigger"
+          OptionName: LowerThreshold
+          Value: "30"
+        - Namespace: "aws:autoscaling:trigger"
+          OptionName: LowerBreachScaleIncrement
+          Value: "-1"
+        - Namespace: aws:autoscaling:trigger
+          OptionName: MeasureName
+          Value: CPUUtilization
+        - Namespace: aws:autoscaling:trigger
+          OptionName: Unit
+          Value: Percent
