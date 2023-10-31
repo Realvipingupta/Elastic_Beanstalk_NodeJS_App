@@ -139,8 +139,8 @@ Resources:
       ApplicationName: !Ref AppName
       Description: String
       SourceBundle:
-        S3Bucket: !Sub ${S3BucketName}  #Change the bucket name.
-        S3Key: !Sub ${S3BucketFileName}	#upload the project in zip file
+        S3Bucket: !Sub ${S3BucketName}
+        S3Key: !Sub ${S3BucketFileName}
 
   AppEnvironmentironment:
     Type: "AWS::ElasticBeanstalk::Environment"
